@@ -1,3 +1,9 @@
+## [1.0.4](https://github.com/jordanvanderlinden/spawnr/compare/v1.0.3...v1.0.4) (2025-09-30)
+
+### 📚 Documentation
+
+* update readme with helm instructions ([698f554](https://github.com/jordanvanderlinden/spawnr/commit/698f554679cea376d11f633491b06977586d0d19))
+
 ## [1.0.3](https://github.com/jordanvanderlinden/spawnr/compare/v1.0.2...v1.0.3) (2025-09-30)
 
 ### 🐛 Bug Fixes
