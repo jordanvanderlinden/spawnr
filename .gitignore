@@ -37,3 +37,12 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Chart releases
+.cr-release-packages/
+.cr-index/
+
+# Semantic release
+node_modules/
+package-lock.json
+CHANGELOG.md

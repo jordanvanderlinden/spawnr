@@ -162,10 +162,10 @@ func (h *Handlers) CreateJob(c *gin.Context) {
 	}
 
 	// Ensure pod template has the spawnr label
-	if job.Spec.Template.ObjectMeta.Labels == nil {
-		job.Spec.Template.ObjectMeta.Labels = make(map[string]string)
+	if job.Spec.Template.Labels == nil {
+		job.Spec.Template.Labels = make(map[string]string)
 	}
-	job.Spec.Template.ObjectMeta.Labels["app.kubernetes.io/managed-by"] = "spawnr"
+	job.Spec.Template.Labels["app.kubernetes.io/managed-by"] = "spawnr"
 
 	// Override the command in the first container
 	if len(job.Spec.Template.Spec.Containers) > 0 {

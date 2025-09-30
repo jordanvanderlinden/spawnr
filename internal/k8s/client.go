@@ -165,7 +165,11 @@ func (c *Client) GetJobLogs(namespace, jobName string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer stream.Close()
+	defer func() {
+		if closeErr := stream.Close(); closeErr != nil {
+			fmt.Printf("Warning: failed to close stream: %v\n", closeErr)
+		}
+	}()
 
 	logs, err := io.ReadAll(stream)
 	if err != nil {
@@ -250,46 +254,6 @@ func (c *Client) ListAllSpawnrJobs() ([]batchv1.Job, error) {
 	}
 
 	return allJobs, nil
-}
-
-// getEKSConfig creates a Kubernetes config for an EKS cluster using AWS CLI
-func getEKSConfig(clusterName, profile string) (*rest.Config, error) {
-	// Get AWS region from environment or use AWS default
-	region := os.Getenv("AWS_REGION")
-	if region == "" {
-		if profile != "" {
-			region = getRegionForProfile(profile)
-		} else {
-			// Try to get the default region from AWS CLI
-			cmd := exec.Command("aws", "configure", "get", "region")
-			output, err := cmd.Output()
-			if err == nil && len(output) > 0 {
-				region = strings.TrimSpace(string(output))
-			} else {
-				region = "us-east-1" // Fallback region
-			}
-		}
-	}
-
-	// Build the aws eks update-kubeconfig command
-	args := []string{"eks", "update-kubeconfig", "--region", region, "--name", clusterName, "--kubeconfig", "/tmp/kubeconfig-" + clusterName}
-	if profile != "" {
-		args = append(args, "--profile", profile)
-	}
-
-	cmd := exec.Command("aws", args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("failed to update kubeconfig for cluster %s: %s, %w", clusterName, string(output), err)
-	}
-
-	// Load the generated kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", "/tmp/kubeconfig-"+clusterName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load kubeconfig for cluster %s: %w", clusterName, err)
-	}
-
-	return config, nil
 }
 
 // ListEKSClusters returns a list of available clusters from Kubernetes secrets
@@ -653,83 +617,6 @@ func DeleteClusterSecret(clusterName string) error {
 	}
 
 	return nil
-}
-
-// getAWSProfiles returns a list of available AWS profiles
-func getAWSProfiles() ([]string, error) {
-	// Get profiles from AWS config
-	cmd := exec.Command("aws", "configure", "list-profiles")
-	output, err := cmd.Output()
-	if err != nil {
-		// Fallback: try to read from ~/.aws/config
-		return []string{"default"}, nil
-	}
-
-	profiles := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(profiles) == 0 {
-		return []string{"default"}, nil
-	}
-
-	// Filter out problematic profiles that are known to have SSO issues
-	var filteredProfiles []string
-	skipProfiles := map[string]bool{
-		"datalake":      true,
-		"datalake_prod": true,
-		"datalake_dev":  true,
-		"dr":            true,
-	}
-
-	for _, profile := range profiles {
-		if !skipProfiles[profile] {
-			filteredProfiles = append(filteredProfiles, profile)
-		}
-	}
-
-	return filteredProfiles, nil
-}
-
-// listClustersForProfile lists EKS clusters for a specific AWS profile
-func listClustersForProfile(profile string) ([]ClusterInfo, error) {
-	// Get region for this profile
-	region := getRegionForProfile(profile)
-
-	// List EKS clusters for this profile
-	cmd := exec.Command("aws", "eks", "list-clusters", "--region", region, "--profile", profile)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("failed to list EKS clusters for profile %s: %s, %w", profile, string(output), err)
-	}
-
-	// Parse the JSON output to extract cluster names
-	var result struct {
-		Clusters []string `json:"clusters"`
-	}
-
-	if err := json.Unmarshal(output, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse cluster list JSON: %w", err)
-	}
-
-	var clusters []ClusterInfo
-	for _, clusterName := range result.Clusters {
-		clusters = append(clusters, ClusterInfo{
-			Name:    clusterName,
-			Region:  region,
-			Status:  "ACTIVE", // Assume active, could be enhanced to check actual status
-			Profile: profile,  // Add profile information
-		})
-	}
-
-	return clusters, nil
-}
-
-// getRegionForProfile gets the region for a specific AWS profile
-func getRegionForProfile(profile string) string {
-	cmd := exec.Command("aws", "configure", "get", "region", "--profile", profile)
-	output, err := cmd.Output()
-	if err != nil || len(output) == 0 {
-		return "us-east-1" // Default region
-	}
-	return strings.TrimSpace(string(output))
 }
 
 // GetClusterInfo returns detailed information about a specific EKS cluster
