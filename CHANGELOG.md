@@ -1,3 +1,9 @@
+## [1.0.3](https://github.com/jordanvanderlinden/spawnr/compare/v1.0.2...v1.0.3) (2025-09-30)
+
+### 🐛 Bug Fixes
+
+* manully capture sem rel outputs ([ca32712](https://github.com/jordanvanderlinden/spawnr/commit/ca327120b154c9acb9aebae4a54be916db4cd6df))
+
 ## [1.0.2](https://github.com/jordanvanderlinden/spawnr/compare/v1.0.1...v1.0.2) (2025-09-30)
 
 ### 🐛 Bug Fixes
