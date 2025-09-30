@@ -39,7 +39,7 @@ A modern Kubernetes job manager with multi-cluster support that allows you to cr
 
 1. **Clone the repository**:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/jordanvanderlinden/spawnr.git
    cd spawnr
    ```
 
@@ -343,15 +343,58 @@ If you see TLS certificate errors:
 2. Or let Spawnr auto-fetch it (requires AWS CLI access)
 3. Check that the certificate-authority-data is stored in the cluster secret
 
+## CI/CD Pipeline
+
+This project uses GitHub Actions for automated releases and deployments:
+
+### Automated Release Process
+
+When commits are pushed to `master`, the following happens automatically:
+
+1. **Semantic Release**: Analyzes commit messages to determine version bump
+   - `feat:` commits trigger minor version bump (e.g., 1.0.0 → 1.1.0)
+   - `fix:` commits trigger patch version bump (e.g., 1.0.0 → 1.0.1)
+   - `BREAKING CHANGE:` or `feat!:` triggers major version bump (e.g., 1.0.0 → 2.0.0)
+   
+2. **Docker Image Build & Push**: Multi-architecture images built and pushed to GitHub Container Registry
+   - Tagged with version (e.g., `ghcr.io/jordanvanderlinden/spawnr:1.2.3`)
+   - Tagged with `latest`
+   
+3. **Helm Chart Release**: Chart packaged and published to GitHub Pages
+   - Chart version updated to match release version
+   - Available via Helm repository
+
+### Commit Message Convention
+
+This project follows [Conventional Commits](https://www.conventionalcommits.org/):
+
+```bash
+# Feature (minor version bump)
+feat(clusters): add connectivity testing
+
+# Bug fix (patch version bump)
+fix(jobs): resolve pod cleanup issue
+
+# Breaking change (major version bump)
+feat!: redesign API endpoints
+
+# Documentation, no release
+docs: update installation guide
+```
+
+For more details, see [CONTRIBUTING.md](.github/CONTRIBUTING.md).
+
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Make your changes
+2. Create a feature branch (`git checkout -b feat/amazing-feature`)
+3. Make your changes using [conventional commits](https://www.conventionalcommits.org/)
 4. Add tests if applicable
-5. Commit your changes (`git commit -m 'Add some amazing feature'`)
-6. Push to the branch (`git push origin feature/amazing-feature`)
+5. Commit your changes (`git commit -m 'feat: add some amazing feature'`)
+6. Push to the branch (`git push origin feat/amazing-feature`)
 7. Open a Pull Request
+
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md) for detailed guidelines.
 
 ## License
 
