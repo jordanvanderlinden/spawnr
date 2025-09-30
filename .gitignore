@@ -4,7 +4,7 @@
 *.dll
 *.so
 *.dylib
-spawnr
+/spawnr
 
 # Test binary, built with `go test -c`
 *.test
