@@ -5,14 +5,38 @@ class SpawnrApp {
         this.currentNamespace = '';
         this.currentDeployment = '';
         this.jobs = new Map();
+        this.clusterStatuses = new Map();
         this.init();
     }
 
     async init() {
+        this.initTheme();
         await this.loadClusters();
         this.setupEventListeners();
         // Load existing jobs on page load
         await this.loadAllJobs();
+    }
+
+    initTheme() {
+        // Load theme from localStorage or default to light
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        document.documentElement.setAttribute('data-bs-theme', savedTheme);
+        this.updateThemeIcon(savedTheme);
+    }
+
+    updateThemeIcon(theme) {
+        const icon = document.getElementById('themeIcon');
+        if (icon) {
+            icon.className = theme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
+        }
+    }
+
+    toggleTheme() {
+        const currentTheme = document.documentElement.getAttribute('data-bs-theme');
+        const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-bs-theme', newTheme);
+        localStorage.setItem('theme', newTheme);
+        this.updateThemeIcon(newTheme);
     }
 
     setupEventListeners() {
@@ -44,6 +68,22 @@ class SpawnrApp {
         document.getElementById('refreshJobsBtn').addEventListener('click', () => {
             this.refreshJobs();
         });
+
+        // Theme toggle
+        const themeToggle = document.getElementById('themeToggle');
+        if (themeToggle) {
+            themeToggle.addEventListener('click', () => {
+                this.toggleTheme();
+            });
+        }
+
+        // Clusters tab event listener
+        const clustersTab = document.getElementById('clusters-tab');
+        if (clustersTab) {
+            clustersTab.addEventListener('shown.bs.tab', () => {
+                this.loadClustersManagement();
+            });
+        }
 
         // Add job name sanitization on blur (when user leaves the field)
         const jobNameInput = document.getElementById('jobName');
@@ -159,7 +199,8 @@ class SpawnrApp {
                 const container = document.getElementById('jobsContainer');
                 container.innerHTML = '';
                 
-                if (jobs.length === 0) {
+                // Handle null or empty jobs array
+                if (!jobs || jobs.length === 0) {
                     container.innerHTML = '<p class="text-center text-muted">No jobs created yet</p>';
                 } else {
                     jobs.forEach(job => this.addJobCard(job));
@@ -167,6 +208,7 @@ class SpawnrApp {
             }
         } catch (error) {
             console.error('Failed to load jobs:', error);
+            this.showAlert('Failed to load jobs', 'danger');
         }
     }
 
@@ -440,24 +482,32 @@ class SpawnrApp {
         const friendlyName = document.getElementById('friendlyName').value;
         const roleArn = document.getElementById('roleArn').value;
         const endpoint = document.getElementById('endpoint').value;
+        const certificateAuthority = document.getElementById('certificateAuthority').value.trim();
 
         if (!clusterName || !friendlyName || !roleArn || !endpoint) {
-            this.showAlert('Please fill in all fields', 'danger');
+            this.showAlert('Please fill in all required fields', 'danger');
             return;
         }
 
         try {
+            const requestBody = {
+                clusterName: clusterName,
+                friendlyName: friendlyName,
+                roleArn: roleArn,
+                endpoint: endpoint
+            };
+
+            // Only include certificate if provided
+            if (certificateAuthority) {
+                requestBody.certificateAuthority = certificateAuthority;
+            }
+
             const response = await fetch('/api/clusters', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
-                body: JSON.stringify({
-                    clusterName: clusterName,
-                    friendlyName: friendlyName,
-                    roleArn: roleArn,
-                    endpoint: endpoint
-                })
+                body: JSON.stringify(requestBody)
             });
 
             if (response.ok) {
@@ -476,6 +526,151 @@ class SpawnrApp {
         } catch (error) {
             console.error('Failed to add cluster:', error);
             this.showAlert('Failed to add cluster', 'danger');
+        }
+    }
+
+    async loadClustersManagement() {
+        const container = document.getElementById('clustersContainer');
+        container.innerHTML = '<div class="col-12 text-center"><i class="fas fa-spinner fa-spin"></i> Loading clusters...</div>';
+
+        try {
+            const response = await fetch('/api/clusters');
+            if (response.ok) {
+                const clusters = await response.json();
+                container.innerHTML = '';
+
+                if (!clusters || clusters.length === 0) {
+                    container.innerHTML = '<div class="col-12 text-center text-muted"><i class="fas fa-info-circle"></i> No clusters configured</div>';
+                    return;
+                }
+
+                clusters.forEach(cluster => {
+                    this.addClusterCard(cluster);
+                });
+            } else {
+                container.innerHTML = '<div class="col-12 text-center text-danger"><i class="fas fa-exclamation-circle"></i> Failed to load clusters</div>';
+            }
+        } catch (error) {
+            console.error('Failed to load clusters:', error);
+            container.innerHTML = '<div class="col-12 text-center text-danger"><i class="fas fa-exclamation-circle"></i> Failed to load clusters</div>';
+        }
+    }
+
+    addClusterCard(cluster) {
+        const container = document.getElementById('clustersContainer');
+        const clusterName = cluster.originalName || cluster.name;
+        const isLocal = clusterName === 'local';
+
+        const card = document.createElement('div');
+        card.className = 'col-md-6 col-lg-4';
+        card.innerHTML = `
+            <div class="card cluster-card" id="cluster-${clusterName}">
+                <div class="card-body">
+                    <h5 class="card-title">
+                        <i class="fas fa-server"></i> ${cluster.name}
+                    </h5>
+                    <p class="card-text">
+                        <small class="text-muted">
+                            <i class="fas fa-map-marker-alt"></i> Region: ${cluster.region || 'N/A'}<br>
+                            ${isLocal ? '<i class="fas fa-laptop"></i> Local Cluster' : `<i class="fas fa-link"></i> ${cluster.originalName}`}
+                        </small>
+                    </p>
+                    <div class="status-display mb-3" id="status-${clusterName}">
+                        <span class="status-indicator status-unknown"></span>
+                        <small>Status: Not tested</small>
+                    </div>
+                    <div class="btn-group w-100" role="group">
+                        <button class="btn btn-sm btn-outline-primary test-connectivity-btn" data-cluster="${clusterName}">
+                            <i class="fas fa-plug"></i> Test Connection
+                        </button>
+                        ${!isLocal ? `<button class="btn btn-sm btn-outline-danger delete-cluster-btn" data-cluster="${clusterName}">
+                            <i class="fas fa-trash"></i>
+                        </button>` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        container.appendChild(card);
+
+        // Add event listener for test connectivity button
+        const testBtn = card.querySelector('.test-connectivity-btn');
+        testBtn.addEventListener('click', () => {
+            this.testClusterConnectivity(clusterName);
+        });
+
+        // Add event listener for delete button (if not local)
+        if (!isLocal) {
+            const deleteBtn = card.querySelector('.delete-cluster-btn');
+            deleteBtn.addEventListener('click', () => {
+                this.deleteCluster(clusterName, cluster.name);
+            });
+        }
+    }
+
+    async testClusterConnectivity(clusterName) {
+        const statusDiv = document.getElementById(`status-${clusterName}`);
+        if (!statusDiv) return;
+
+        // Show testing status
+        statusDiv.innerHTML = '<span class="status-indicator status-testing"></span><small>Testing connection...</small>';
+
+        try {
+            // Try to switch to the cluster and get namespaces
+            const switchResponse = await fetch('/api/clusters/switch', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    clusterName: clusterName
+                })
+            });
+
+            if (!switchResponse.ok) {
+                throw new Error('Failed to switch to cluster');
+            }
+
+            // Try to get namespaces
+            const namespacesResponse = await fetch('/api/namespaces');
+            
+            if (namespacesResponse.ok) {
+                const namespaces = await namespacesResponse.json();
+                statusDiv.innerHTML = `<span class="status-indicator status-success"></span><small>✓ Connected (${namespaces.length} namespaces)</small>`;
+                this.clusterStatuses.set(clusterName, 'success');
+            } else {
+                const error = await namespacesResponse.json();
+                statusDiv.innerHTML = `<span class="status-indicator status-error"></span><small>✗ Error: ${error.error || 'Unknown error'}</small>`;
+                this.clusterStatuses.set(clusterName, 'error');
+            }
+        } catch (error) {
+            console.error('Connection test failed:', error);
+            statusDiv.innerHTML = `<span class="status-indicator status-error"></span><small>✗ Connection failed: ${error.message}</small>`;
+            this.clusterStatuses.set(clusterName, 'error');
+        }
+    }
+
+    async deleteCluster(clusterName, friendlyName) {
+        if (!confirm(`Are you sure you want to delete cluster "${friendlyName}"?`)) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/api/clusters/${encodeURIComponent(clusterName)}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                this.showAlert(`Cluster "${friendlyName}" deleted successfully`, 'success');
+                await this.loadClusters();
+                await this.loadClustersManagement();
+            } else {
+                const error = await response.json();
+                this.showAlert(`Failed to delete cluster: ${error.error}`, 'danger');
+            }
+        } catch (error) {
+            console.error('Failed to delete cluster:', error);
+            this.showAlert('Failed to delete cluster', 'danger');
         }
     }
 }

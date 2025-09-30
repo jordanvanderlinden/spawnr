@@ -23,6 +23,7 @@ import (
 
 type Client struct {
 	clientset *kubernetes.Clientset
+	config    *rest.Config
 }
 
 type ClusterInfo struct {
@@ -46,17 +47,18 @@ func NewClientWithClusterAndProfile(clusterName, profile string) (*Client, error
 	var config *rest.Config
 	var err error
 
-	// Try in-cluster config first (when running in Kubernetes)
-	config, err = rest.InClusterConfig()
-	if err != nil {
-		// For local development, use kubeconfig with specific cluster
-		if clusterName != "" {
-			config, err = getKubeconfigForCluster(clusterName)
-			if err != nil {
-				return nil, fmt.Errorf("failed to get kubeconfig for cluster %s: %w", clusterName, err)
-			}
-		} else {
-			// Fall back to default kubeconfig
+	// If a specific cluster is requested, use getKubeconfigForCluster
+	if clusterName != "" {
+		fmt.Printf("[NewClientWithCluster] Creating client for cluster: %s\n", clusterName)
+		config, err = getKubeconfigForCluster(clusterName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get kubeconfig for cluster %s: %w", clusterName, err)
+		}
+	} else {
+		// No specific cluster requested, try in-cluster config first
+		config, err = rest.InClusterConfig()
+		if err != nil {
+			// Fall back to default kubeconfig for local development
 			kubeconfig := os.Getenv("KUBECONFIG")
 			if kubeconfig == "" {
 				kubeconfig = ""
@@ -75,11 +77,23 @@ func NewClientWithClusterAndProfile(clusterName, profile string) (*Client, error
 
 	return &Client{
 		clientset: clientset,
+		config:    config,
 	}, nil
 }
 
 func (c *Client) ListDeployments(namespace string) (*appsv1.DeploymentList, error) {
-	return c.clientset.AppsV1().Deployments(namespace).List(context.TODO(), metav1.ListOptions{})
+	// Log the server URL to identify which cluster is being queried
+	serverURL := c.config.Host
+	fmt.Printf("[ListDeployments] Querying cluster at: %s for namespace: %s\n", serverURL, namespace)
+
+	deployments, err := c.clientset.AppsV1().Deployments(namespace).List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		fmt.Printf("[ListDeployments] ERROR querying %s (ns=%s): %v\n", serverURL, namespace, err)
+		return nil, err
+	}
+
+	fmt.Printf("[ListDeployments] Found %d deployments in namespace %s from %s\n", len(deployments.Items), namespace, serverURL)
+	return deployments, nil
 }
 
 func (c *Client) GetDeployment(namespace, name string) (*appsv1.Deployment, error) {
@@ -162,7 +176,18 @@ func (c *Client) GetJobLogs(namespace, jobName string) (string, error) {
 }
 
 func (c *Client) ListNamespaces() (*corev1.NamespaceList, error) {
-	return c.clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
+	// Log the server URL to identify which cluster is being queried
+	serverURL := c.config.Host
+	fmt.Printf("[ListNamespaces] Querying cluster at: %s\n", serverURL)
+
+	namespaces, err := c.clientset.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		fmt.Printf("[ListNamespaces] ERROR querying %s: %v\n", serverURL, err)
+		return nil, err
+	}
+
+	fmt.Printf("[ListNamespaces] Found %d namespaces from %s\n", len(namespaces.Items), serverURL)
+	return namespaces, nil
 }
 
 func (c *Client) WatchJobEvents(namespace, jobName string) (<-chan string, error) {
@@ -293,10 +318,10 @@ func ListEKSClusters() ([]ClusterInfo, error) {
 		return clusters, nil
 	}
 
-	// Get the current namespace from environment or use default
+	// Get the current namespace from environment or use spawnr as default
 	namespace := os.Getenv("POD_NAMESPACE")
 	if namespace == "" {
-		namespace = "default"
+		namespace = "spawnr"
 	}
 
 	// List secrets with label "spawnr.io/cluster=true"
@@ -308,21 +333,45 @@ func ListEKSClusters() ([]ClusterInfo, error) {
 		return clusters, nil
 	}
 
-	// Add clusters from secrets
+	// Add clusters from secrets and update any missing CA certificates
 	for _, secret := range secrets.Items {
 		// Extract cluster information from secret data
 		clusterName := string(secret.Data["cluster-name"])
 		endpoint := string(secret.Data["endpoint"])
 		friendlyName := string(secret.Data["friendly-name"])
+		roleArn := string(secret.Data["role-arn"])
+		certificateAuthority := string(secret.Data["certificate-authority-data"])
+
+		// If this secret doesn't have a CA certificate, try to fetch and update it
+		if certificateAuthority == "" && roleArn != "" && clusterName != "" {
+			fmt.Printf("[ListEKSClusters] Secret '%s' missing CA cert, attempting to fetch...\n", secret.Name)
+			caCert, err := fetchClusterCertificate(clusterName, roleArn)
+			if err != nil {
+				fmt.Printf("[ListEKSClusters] WARNING: Failed to fetch CA cert for %s: %v\n", secret.Name, err)
+			} else {
+				// Update the secret with the CA certificate
+				secret.Data["certificate-authority-data"] = []byte(caCert)
+				_, err = clientset.CoreV1().Secrets(namespace).Update(context.TODO(), &secret, metav1.UpdateOptions{})
+				if err != nil {
+					fmt.Printf("[ListEKSClusters] WARNING: Failed to update secret %s with CA cert: %v\n", secret.Name, err)
+				} else {
+					fmt.Printf("[ListEKSClusters] Successfully updated secret '%s' with CA certificate\n", secret.Name)
+				}
+			}
+		}
 
 		// Extract region from endpoint URL
+		// EKS endpoint format: https://<hash>.<region>.eks.amazonaws.com
 		region := "unknown"
 		if strings.Contains(endpoint, ".eks.") {
 			parts := strings.Split(endpoint, ".eks.")
-			if len(parts) > 1 {
-				regionParts := strings.Split(parts[1], ".")
-				if len(regionParts) > 0 {
-					region = regionParts[0]
+			if len(parts) > 0 {
+				// parts[0] should be like "https://<hash>.<region>"
+				// Split by dots and get the last element before .eks.
+				beforeEks := strings.Split(parts[0], ".")
+				if len(beforeEks) >= 2 {
+					// The region is the second-to-last element before .eks.
+					region = beforeEks[len(beforeEks)-1]
 				}
 			}
 		}
@@ -341,8 +390,11 @@ func ListEKSClusters() ([]ClusterInfo, error) {
 
 // getKubeconfigForCluster creates a Kubernetes config for a specific cluster using AWS CLI
 func getKubeconfigForCluster(clusterName string) (*rest.Config, error) {
+	fmt.Printf("[getKubeconfigForCluster] Requested cluster: %s\n", clusterName)
+
 	// Handle the default local cluster
 	if clusterName == "local" {
+		fmt.Printf("[getKubeconfigForCluster] Using local cluster config\n")
 		// Use in-cluster config for the local cluster
 		config, err := rest.InClusterConfig()
 		if err != nil {
@@ -356,6 +408,7 @@ func getKubeconfigForCluster(clusterName string) (*rest.Config, error) {
 				return nil, fmt.Errorf("failed to create Kubernetes config: %w", err)
 			}
 		}
+		fmt.Printf("[getKubeconfigForCluster] Local cluster config host: %s\n", config.Host)
 		return config, nil
 	}
 
@@ -378,28 +431,44 @@ func getKubeconfigForCluster(clusterName string) (*rest.Config, error) {
 		return nil, fmt.Errorf("failed to create Kubernetes clientset: %w", err)
 	}
 
-	// Get the current namespace from environment or use default
+	// Get the current namespace from environment or use spawnr as default
 	namespace := os.Getenv("POD_NAMESPACE")
 	if namespace == "" {
-		namespace = "default"
+		namespace = "spawnr"
 	}
+
+	fmt.Printf("[getKubeconfigForCluster] Looking for secret '%s' in namespace '%s'\n", clusterName, namespace)
 
 	// Get the cluster secret
 	secret, err := clientset.CoreV1().Secrets(namespace).Get(context.TODO(), clusterName, metav1.GetOptions{})
 	if err != nil {
+		fmt.Printf("[getKubeconfigForCluster] ERROR: Failed to get secret: %v\n", err)
 		return nil, fmt.Errorf("failed to get cluster secret %s: %w", clusterName, err)
 	}
 
 	// Extract cluster information from secret
+	actualClusterName := string(secret.Data["cluster-name"])
 	roleArn := string(secret.Data["role-arn"])
 	endpoint := string(secret.Data["endpoint"])
+	certificateAuthority := string(secret.Data["certificate-authority-data"])
+
+	fmt.Printf("[getKubeconfigForCluster] Found secret - actualClusterName: %s, endpoint: %s, roleArn: %s, hasCA: %v\n",
+		actualClusterName, endpoint, roleArn, certificateAuthority != "")
 
 	// Use AWS CLI to get the kubeconfig for this cluster
-	cmd := exec.Command("aws", "eks", "get-token", "--cluster-name", clusterName, "--role-arn", roleArn)
+	fmt.Printf("[getKubeconfigForCluster] Running: aws eks get-token --cluster-name %s --role-arn %s\n", actualClusterName, roleArn)
+	cmd := exec.Command("aws", "eks", "get-token", "--cluster-name", actualClusterName, "--role-arn", roleArn)
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get EKS token: %w", err)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			fmt.Printf("[getKubeconfigForCluster] ERROR: AWS CLI failed: %s\n", string(exitErr.Stderr))
+			return nil, fmt.Errorf("failed to get EKS token for cluster %s: %s, %w", actualClusterName, string(exitErr.Stderr), err)
+		}
+		fmt.Printf("[getKubeconfigForCluster] ERROR: AWS CLI command failed: %v\n", err)
+		return nil, fmt.Errorf("failed to get EKS token for cluster %s: %w", actualClusterName, err)
 	}
+
+	fmt.Printf("[getKubeconfigForCluster] AWS CLI token retrieved successfully\n")
 
 	// Parse the token response
 	var tokenResponse struct {
@@ -408,37 +477,70 @@ func getKubeconfigForCluster(clusterName string) (*rest.Config, error) {
 		} `json:"status"`
 	}
 	if err := json.Unmarshal(output, &tokenResponse); err != nil {
+		fmt.Printf("[getKubeconfigForCluster] ERROR: Failed to parse token JSON: %v\n", err)
 		return nil, fmt.Errorf("failed to parse token response: %w", err)
+	}
+
+	// Create cluster config with or without CA certificate
+	clusterConfig := &clientcmdapi.Cluster{
+		Server: endpoint,
+	}
+
+	// Use CA certificate if available, otherwise skip TLS verification
+	if certificateAuthority != "" {
+		clusterConfig.CertificateAuthorityData = []byte(certificateAuthority)
+		fmt.Printf("[getKubeconfigForCluster] Using CA certificate for TLS verification\n")
+	} else {
+		clusterConfig.InsecureSkipTLSVerify = true
+		fmt.Printf("[getKubeconfigForCluster] WARNING: No CA certificate, using insecure TLS\n")
 	}
 
 	// Create a temporary kubeconfig with the token
 	tempKubeconfig := &clientcmdapi.Config{
 		Clusters: map[string]*clientcmdapi.Cluster{
-			clusterName: {
-				Server: endpoint,
-			},
+			actualClusterName: clusterConfig,
 		},
 		AuthInfos: map[string]*clientcmdapi.AuthInfo{
-			clusterName: {
+			actualClusterName: {
 				Token: tokenResponse.Status.Token,
 			},
 		},
 		Contexts: map[string]*clientcmdapi.Context{
-			clusterName: {
-				Cluster:  clusterName,
-				AuthInfo: clusterName,
+			actualClusterName: {
+				Cluster:  actualClusterName,
+				AuthInfo: actualClusterName,
 			},
 		},
-		CurrentContext: clusterName,
+		CurrentContext: actualClusterName,
 	}
 
 	// Create config from the temporary kubeconfig
 	clientConfig := clientcmd.NewDefaultClientConfig(*tempKubeconfig, &clientcmd.ConfigOverrides{})
-	return clientConfig.ClientConfig()
+	finalConfig, err := clientConfig.ClientConfig()
+	if err != nil {
+		fmt.Printf("[getKubeconfigForCluster] ERROR: Failed to create client config: %v\n", err)
+		return nil, err
+	}
+
+	fmt.Printf("[getKubeconfigForCluster] Successfully created config for endpoint: %s\n", finalConfig.Host)
+	return finalConfig, nil
 }
 
 // CreateClusterSecret creates a Kubernetes secret for a cluster
-func CreateClusterSecret(clusterName, friendlyName, roleArn, endpoint string) error {
+func CreateClusterSecret(clusterName, friendlyName, roleArn, endpoint, certificateAuthority string) error {
+	// If CA cert is not provided, fetch it from AWS EKS
+	if certificateAuthority == "" {
+		fmt.Printf("[CreateClusterSecret] No CA cert provided, fetching from AWS EKS for cluster: %s\n", clusterName)
+		caCert, err := fetchClusterCertificate(clusterName, roleArn)
+		if err != nil {
+			fmt.Printf("[CreateClusterSecret] WARNING: Failed to fetch CA cert: %v, will use insecure\n", err)
+			// Continue without CA cert - will use insecure TLS
+		} else {
+			certificateAuthority = caCert
+			fmt.Printf("[CreateClusterSecret] Successfully fetched CA certificate for cluster: %s\n", clusterName)
+		}
+	}
+
 	// Create a Kubernetes client
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -458,10 +560,23 @@ func CreateClusterSecret(clusterName, friendlyName, roleArn, endpoint string) er
 		return fmt.Errorf("failed to create Kubernetes clientset: %w", err)
 	}
 
-	// Get the current namespace from environment or use default
+	// Get the current namespace from environment or use spawnr as default
 	namespace := os.Getenv("POD_NAMESPACE")
 	if namespace == "" {
-		namespace = "default"
+		namespace = "spawnr"
+	}
+
+	// Create the secret data
+	secretData := map[string][]byte{
+		"cluster-name":  []byte(clusterName),
+		"friendly-name": []byte(friendlyName),
+		"role-arn":      []byte(roleArn),
+		"endpoint":      []byte(endpoint),
+	}
+
+	// Add CA cert if available
+	if certificateAuthority != "" {
+		secretData["certificate-authority-data"] = []byte(certificateAuthority)
 	}
 
 	// Create the secret
@@ -472,12 +587,7 @@ func CreateClusterSecret(clusterName, friendlyName, roleArn, endpoint string) er
 				"spawnr.io/cluster": "true",
 			},
 		},
-		Data: map[string][]byte{
-			"cluster-name":  []byte(clusterName),
-			"friendly-name": []byte(friendlyName),
-			"role-arn":      []byte(roleArn),
-			"endpoint":      []byte(endpoint),
-		},
+		Data: secretData,
 	}
 
 	// Create the secret
@@ -487,6 +597,26 @@ func CreateClusterSecret(clusterName, friendlyName, roleArn, endpoint string) er
 	}
 
 	return nil
+}
+
+// fetchClusterCertificate fetches the CA certificate for an EKS cluster using AWS CLI
+func fetchClusterCertificate(clusterName, roleArn string) (string, error) {
+	// Use AWS CLI to get cluster details
+	cmd := exec.Command("aws", "eks", "describe-cluster", "--name", clusterName, "--role-arn", roleArn, "--query", "cluster.certificateAuthority.data", "--output", "text")
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return "", fmt.Errorf("aws eks describe-cluster failed: %s", string(exitErr.Stderr))
+		}
+		return "", fmt.Errorf("failed to execute aws eks describe-cluster: %w", err)
+	}
+
+	caCert := strings.TrimSpace(string(output))
+	if caCert == "" || caCert == "None" {
+		return "", fmt.Errorf("no CA certificate returned from AWS")
+	}
+
+	return caCert, nil
 }
 
 // DeleteClusterSecret deletes a Kubernetes secret for a cluster
@@ -510,10 +640,10 @@ func DeleteClusterSecret(clusterName string) error {
 		return fmt.Errorf("failed to create Kubernetes clientset: %w", err)
 	}
 
-	// Get the current namespace from environment or use default
+	// Get the current namespace from environment or use spawnr as default
 	namespace := os.Getenv("POD_NAMESPACE")
 	if namespace == "" {
-		namespace = "default"
+		namespace = "spawnr"
 	}
 
 	// Delete the secret
@@ -645,4 +775,12 @@ func GetClusterInfo(clusterName string) (*ClusterInfo, error) {
 	}
 
 	return info, nil
+}
+
+// GetServerURL returns the Kubernetes API server URL for this client
+func (c *Client) GetServerURL() string {
+	if c.config == nil {
+		return "<no config>"
+	}
+	return c.config.Host
 }

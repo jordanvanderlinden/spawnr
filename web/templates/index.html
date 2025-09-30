@@ -1,18 +1,28 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-bs-theme="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{.title}}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
+        :root {
+            --log-bg: #1e1e1e;
+            --log-fg: #d4d4d4;
+        }
+        
+        [data-bs-theme="dark"] {
+            --log-bg: #0d1117;
+            --log-fg: #c9d1d9;
+        }
+
         .job-card {
             margin-bottom: 1rem;
         }
         .log-container {
-            background-color: #1e1e1e;
-            color: #d4d4d4;
+            background-color: var(--log-bg);
+            color: var(--log-fg);
             font-family: 'Courier New', monospace;
             max-height: 400px;
             overflow-y: auto;
@@ -23,6 +33,31 @@
             width: 1rem;
             height: 1rem;
         }
+        .cluster-card {
+            margin-bottom: 1rem;
+        }
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        .status-success {
+            background-color: #28a745;
+        }
+        .status-error {
+            background-color: #dc3545;
+        }
+        .status-testing {
+            background-color: #ffc107;
+        }
+        .status-unknown {
+            background-color: #6c757d;
+        }
+        .theme-toggle {
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -31,71 +66,105 @@
             <span class="navbar-brand mb-0 h1">
                 <i class="fas fa-rocket"></i> Spawnr
             </span>
+            <button class="btn btn-outline-light btn-sm theme-toggle" id="themeToggle">
+                <i class="fas fa-moon" id="themeIcon"></i>
+            </button>
         </div>
     </nav>
 
     <div class="container-fluid mt-4">
-        <div class="row">
-            <!-- Cluster and Deployment Selection -->
-            <div class="col-md-4">
-                <div class="card">
-                    <div class="card-header">
-                        <h5><i class="fas fa-cloud"></i> Cluster & Deployment Selection</h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <label for="clusterSelect" class="form-label">EKS Cluster</label>
-                            <div class="input-group">
-                                <select class="form-select" id="clusterSelect">
-                                    <option value="">Loading clusters...</option>
-                                </select>
-                                <button class="btn btn-outline-secondary" type="button" id="addClusterBtn" data-bs-toggle="modal" data-bs-target="#addClusterModal">
-                                    <i class="fas fa-plus"></i>
+        <!-- Navigation Tabs -->
+        <ul class="nav nav-tabs mb-3" id="mainTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="jobs-tab" data-bs-toggle="tab" data-bs-target="#jobs-panel" type="button" role="tab">
+                    <i class="fas fa-tasks"></i> Jobs
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="clusters-tab" data-bs-toggle="tab" data-bs-target="#clusters-panel" type="button" role="tab">
+                    <i class="fas fa-server"></i> Clusters
+                </button>
+            </li>
+        </ul>
+
+        <!-- Tab Content -->
+        <div class="tab-content" id="mainTabContent">
+            <!-- Jobs Tab -->
+            <div class="tab-pane fade show active" id="jobs-panel" role="tabpanel">
+                <div class="row">
+                    <!-- Cluster and Deployment Selection -->
+                    <div class="col-md-4">
+                        <div class="card">
+                            <div class="card-header">
+                                <h5><i class="fas fa-cloud"></i> Cluster & Deployment Selection</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="clusterSelect" class="form-label">EKS Cluster</label>
+                                    <select class="form-select" id="clusterSelect">
+                                        <option value="">Loading clusters...</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="namespaceSelect" class="form-label">Namespace</label>
+                                    <select class="form-select" id="namespaceSelect" disabled>
+                                        <option value="">Select a cluster first</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="deploymentSelect" class="form-label">Deployment</label>
+                                    <select class="form-select" id="deploymentSelect" disabled>
+                                        <option value="">Select a namespace first</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="jobName" class="form-label">Job Name</label>
+                                    <input type="text" class="form-control" id="jobName" placeholder="Enter job name">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="command" class="form-label">Command</label>
+                                    <textarea class="form-control" id="command" rows="3" placeholder="Enter command to run"></textarea>
+                                </div>
+                                <button class="btn btn-primary" id="createJobBtn" disabled>
+                                    <i class="fas fa-play"></i> Create Job
                                 </button>
                             </div>
                         </div>
-                        <div class="mb-3">
-                            <label for="namespaceSelect" class="form-label">Namespace</label>
-                            <select class="form-select" id="namespaceSelect" disabled>
-                                <option value="">Select a cluster first</option>
-                            </select>
+                    </div>
+
+                    <!-- Job Management -->
+                    <div class="col-md-8">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5><i class="fas fa-tasks"></i> Job Management</h5>
+                                <button class="btn btn-sm btn-outline-secondary" id="refreshJobsBtn">
+                                    <i class="fas fa-sync-alt"></i> Refresh
+                                </button>
+                            </div>
+                            <div class="card-body">
+                                <div id="jobsContainer">
+                                    <div class="text-center text-muted">
+                                        <i class="fas fa-info-circle"></i> No jobs created yet
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="mb-3">
-                            <label for="deploymentSelect" class="form-label">Deployment</label>
-                            <select class="form-select" id="deploymentSelect" disabled>
-                                <option value="">Select a namespace first</option>
-                            </select>
-                        </div>
-                        <div class="mb-3">
-                            <label for="jobName" class="form-label">Job Name</label>
-                            <input type="text" class="form-control" id="jobName" placeholder="Enter job name">
-                        </div>
-                        <div class="mb-3">
-                            <label for="command" class="form-label">Command</label>
-                            <textarea class="form-control" id="command" rows="3" placeholder="Enter command to run"></textarea>
-                        </div>
-                        <button class="btn btn-primary" id="createJobBtn" disabled>
-                            <i class="fas fa-play"></i> Create Job
-                        </button>
                     </div>
                 </div>
             </div>
 
-            <!-- Job Management -->
-            <div class="col-md-8">
-                <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5><i class="fas fa-tasks"></i> Job Management</h5>
-                        <button class="btn btn-sm btn-outline-secondary" id="refreshJobsBtn">
-                            <i class="fas fa-sync-alt"></i> Refresh
+            <!-- Clusters Tab -->
+            <div class="tab-pane fade" id="clusters-panel" role="tabpanel">
+                <div class="row mb-3">
+                    <div class="col-12">
+                        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addClusterModal">
+                            <i class="fas fa-plus"></i> Add New Cluster
                         </button>
                     </div>
-                    <div class="card-body">
-                        <div id="jobsContainer">
-                            <div class="text-center text-muted">
-                                <i class="fas fa-info-circle"></i> No jobs created yet
-                            </div>
-                        </div>
+                </div>
+                <div class="row" id="clustersContainer">
+                    <div class="col-12 text-center text-muted">
+                        <i class="fas fa-spinner fa-spin"></i> Loading clusters...
                     </div>
                 </div>
             </div>
@@ -152,6 +221,11 @@
                             <input type="url" class="form-control" id="endpoint" required>
                             <div class="form-text">EKS cluster endpoint URL</div>
                         </div>
+                        <div class="mb-3">
+                            <label for="certificateAuthority" class="form-label">Certificate Authority Data (Optional)</label>
+                            <textarea class="form-control font-monospace" id="certificateAuthority" rows="4" placeholder="Base64-encoded CA certificate (optional - will be fetched automatically if not provided)"></textarea>
+                            <div class="form-text">The base64-encoded certificate authority data for the cluster</div>
+                        </div>
                     </form>
                 </div>
                 <div class="modal-footer">
@@ -162,7 +236,7 @@
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="/static/app.js"></script>
 </body>
 </html>

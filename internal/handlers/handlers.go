@@ -1,9 +1,11 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 
 	"spawnr/internal/k8s"
 
@@ -15,6 +17,7 @@ import (
 
 type Handlers struct {
 	k8sClient *k8s.Client
+	clientMu  sync.RWMutex
 }
 
 func New(k8sClient *k8s.Client) *Handlers {
@@ -31,7 +34,13 @@ type CreateJobRequest struct {
 }
 
 func (h *Handlers) GetNamespaces(c *gin.Context) {
-	namespaces, err := h.k8sClient.ListNamespaces()
+	h.clientMu.RLock()
+	client := h.k8sClient
+	h.clientMu.RUnlock()
+
+	fmt.Printf("[GetNamespaces] Handler using client with server: %s\n", client.GetServerURL())
+
+	namespaces, err := client.ListNamespaces()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -46,7 +55,13 @@ func (h *Handlers) GetDeployments(c *gin.Context) {
 		namespace = "default"
 	}
 
-	deployments, err := h.k8sClient.ListDeployments(namespace)
+	h.clientMu.RLock()
+	client := h.k8sClient
+	h.clientMu.RUnlock()
+
+	fmt.Printf("[GetDeployments] Handler using client with server: %s for namespace: %s\n", client.GetServerURL(), namespace)
+
+	deployments, err := client.ListDeployments(namespace)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -59,7 +74,11 @@ func (h *Handlers) GetDeployment(c *gin.Context) {
 	namespace := c.Param("namespace")
 	name := c.Param("name")
 
-	deployment, err := h.k8sClient.GetDeployment(namespace, name)
+	h.clientMu.RLock()
+	client := h.k8sClient
+	h.clientMu.RUnlock()
+
+	deployment, err := client.GetDeployment(namespace, name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -114,8 +133,12 @@ func (h *Handlers) CreateJob(c *gin.Context) {
 	// Sanitize the job name
 	sanitizedName := sanitizeJobName(req.JobName)
 
+	h.clientMu.RLock()
+	client := h.k8sClient
+	h.clientMu.RUnlock()
+
 	// Get the deployment
-	deployment, err := h.k8sClient.GetDeployment(req.Namespace, req.Deployment)
+	deployment, err := client.GetDeployment(req.Namespace, req.Deployment)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -153,7 +176,7 @@ func (h *Handlers) CreateJob(c *gin.Context) {
 	// Set job to not restart
 	job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
 
-	createdJob, err := h.k8sClient.CreateJob(req.Namespace, job)
+	createdJob, err := client.CreateJob(req.Namespace, job)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -166,7 +189,11 @@ func (h *Handlers) GetJob(c *gin.Context) {
 	namespace := c.Param("namespace")
 	name := c.Param("name")
 
-	job, err := h.k8sClient.GetJob(namespace, name)
+	h.clientMu.RLock()
+	client := h.k8sClient
+	h.clientMu.RUnlock()
+
+	job, err := client.GetJob(namespace, name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -179,7 +206,11 @@ func (h *Handlers) DeleteJob(c *gin.Context) {
 	namespace := c.Param("namespace")
 	name := c.Param("name")
 
-	err := h.k8sClient.DeleteJob(namespace, name)
+	h.clientMu.RLock()
+	client := h.k8sClient
+	h.clientMu.RUnlock()
+
+	err := client.DeleteJob(namespace, name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -192,7 +223,11 @@ func (h *Handlers) GetJobLogs(c *gin.Context) {
 	namespace := c.Param("namespace")
 	name := c.Param("name")
 
-	logs, err := h.k8sClient.GetJobLogs(namespace, name)
+	h.clientMu.RLock()
+	client := h.k8sClient
+	h.clientMu.RUnlock()
+
+	logs, err := client.GetJobLogs(namespace, name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -211,7 +246,11 @@ func (h *Handlers) WatchJob(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("Access-Control-Allow-Origin", "*")
 
-	events, err := h.k8sClient.WatchJobEvents(namespace, name)
+	h.clientMu.RLock()
+	client := h.k8sClient
+	h.clientMu.RUnlock()
+
+	events, err := client.WatchJobEvents(namespace, name)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -255,15 +294,25 @@ func (h *Handlers) SwitchCluster(c *gin.Context) {
 		return
 	}
 
+	fmt.Printf("[SwitchCluster] Switching to cluster: %s\n", request.ClusterName)
+
 	// Create a new client for the selected cluster using the user name
 	newClient, err := k8s.NewClientWithCluster(request.ClusterName)
 	if err != nil {
+		fmt.Printf("[SwitchCluster] ERROR creating client for %s: %v\n", request.ClusterName, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Update the handler's client
+	fmt.Printf("[SwitchCluster] Successfully created client for %s, server: %s\n", request.ClusterName, newClient.GetServerURL())
+
+	// Update the handler's client with write lock
+	h.clientMu.Lock()
+	oldServerURL := h.k8sClient.GetServerURL()
 	h.k8sClient = newClient
+	h.clientMu.Unlock()
+
+	fmt.Printf("[SwitchCluster] Client updated. Old server: %s, New server: %s\n", oldServerURL, newClient.GetServerURL())
 
 	c.JSON(http.StatusOK, gin.H{"message": "Switched to cluster " + request.ClusterName})
 }
@@ -271,10 +320,11 @@ func (h *Handlers) SwitchCluster(c *gin.Context) {
 // AddCluster adds a new cluster
 func (h *Handlers) AddCluster(c *gin.Context) {
 	var request struct {
-		ClusterName  string `json:"clusterName" binding:"required"`
-		FriendlyName string `json:"friendlyName" binding:"required"`
-		RoleArn      string `json:"roleArn" binding:"required"`
-		Endpoint     string `json:"endpoint" binding:"required"`
+		ClusterName          string `json:"clusterName" binding:"required"`
+		FriendlyName         string `json:"friendlyName" binding:"required"`
+		RoleArn              string `json:"roleArn" binding:"required"`
+		Endpoint             string `json:"endpoint" binding:"required"`
+		CertificateAuthority string `json:"certificateAuthority"` // Optional, will be fetched if not provided
 	}
 
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -282,8 +332,8 @@ func (h *Handlers) AddCluster(c *gin.Context) {
 		return
 	}
 
-	// Create the cluster secret
-	err := k8s.CreateClusterSecret(request.ClusterName, request.FriendlyName, request.RoleArn, request.Endpoint)
+	// Create the cluster secret (will fetch CA cert if not provided)
+	err := k8s.CreateClusterSecret(request.ClusterName, request.FriendlyName, request.RoleArn, request.Endpoint, request.CertificateAuthority)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -308,7 +358,11 @@ func (h *Handlers) DeleteCluster(c *gin.Context) {
 
 // GetAllJobs returns all jobs managed by spawnr across all namespaces
 func (h *Handlers) GetAllJobs(c *gin.Context) {
-	jobs, err := h.k8sClient.ListAllSpawnrJobs()
+	h.clientMu.RLock()
+	client := h.k8sClient
+	h.clientMu.RUnlock()
+
+	jobs, err := client.ListAllSpawnrJobs()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

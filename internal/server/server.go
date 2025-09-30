@@ -42,7 +42,7 @@ func (s *Server) Run(addr string) error {
 
 	// Cluster management
 	r.GET("/api/clusters", s.handlers.GetClusters)
-	r.POST("/api/clusters/switch", s.handlers.SwitchCluster)
+	r.POST("/api/clusters/switch", s.handlers.SwitchCluster) // Must be before :name routes
 	r.POST("/api/clusters", s.handlers.AddCluster)
 	r.GET("/api/clusters/:name", s.handlers.GetClusterInfo)
 	r.DELETE("/api/clusters/:name", s.handlers.DeleteCluster)
