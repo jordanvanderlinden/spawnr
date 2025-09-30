@@ -1,0 +1,27 @@
+apiVersion: v1
+entries:
+  spawnr:
+  - apiVersion: v2
+    appVersion: 1.0.3
+    created: "2025-09-30T07:37:57.883448566Z"
+    description: A Kubernetes job manager with multi-cluster support for creating
+      and managing jobs from deployments
+    digest: cae4fd8aaf977fcbf2111a2146134bbba487f49d22ba1bc503cb5106169e7927
+    home: https://github.com/jordanvanderlinden/spawnr
+    keywords:
+    - kubernetes
+    - jobs
+    - deployments
+    - management
+    - multi-cluster
+    - eks
+    maintainers:
+    - name: Jordan Vanderlinden
+    name: spawnr
+    sources:
+    - https://github.com/jordanvanderlinden/spawnr
+    type: application
+    urls:
+    - https://github.com/jordanvanderlinden/spawnr/releases/download/spawnr-1.0.3/spawnr-1.0.3.tgz
+    version: 1.0.3
+generated: "2025-09-30T07:37:57.883454217Z"
