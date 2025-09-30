@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/jordanvanderlinden/spawnr/compare/v1.0.0...v1.0.1) (2025-09-30)
+
+### 🐛 Bug Fixes
+
+* release steps ([f7e46d4](https://github.com/jordanvanderlinden/spawnr/commit/f7e46d4700fc7ce9dccb7dd25ded53f7938c29e7))
+
 ## 1.0.0 (2025-09-30)
 
 ### ✨ Features
