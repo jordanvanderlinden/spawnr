@@ -28,7 +28,27 @@ A modern Kubernetes job manager with multi-cluster support that allows you to cr
 
 ## Quick Start
 
-### Prerequisites
+### Install with Helm (Recommended)
+
+The fastest way to get started:
+
+```bash
+# Add the Helm repository
+helm repo add spawnr https://jordanvanderlinden.github.io/spawnr/
+helm repo update
+
+# Install Spawnr
+helm install spawnr spawnr/spawnr --namespace spawnr --create-namespace
+
+# Access the UI
+kubectl port-forward -n spawnr svc/spawnr 8080:80
+```
+
+Then open http://localhost:8080 in your browser.
+
+For production deployments with IRSA, see [Kubernetes Deployment](#kubernetes-deployment) below.
+
+### Prerequisites for Development
 - Go 1.25+
 - Docker (for building images)
 - kubectl configured with access to a Kubernetes cluster
@@ -58,31 +78,57 @@ A modern Kubernetes job manager with multi-cluster support that allows you to cr
 
 ### Kubernetes Deployment
 
-1. **Deploy using Helm**:
+1. **Add the Helm repository**:
+   ```bash
+   helm repo add spawnr https://jordanvanderlinden.github.io/spawnr/
+   helm repo update
+   ```
+
+2. **Install with default values**:
    ```bash
    # Create namespace
    kubectl create namespace spawnr
    
    # Install the Helm chart
-   helm install spawnr ./helm/spawnr --namespace spawnr
+   helm install spawnr spawnr/spawnr --namespace spawnr
    ```
 
-2. **Configure IAM Role for Service Account (IRSA)**:
-   - Create an IAM role with EKS access permissions
-   - Annotate the service account with the role ARN:
-     ```yaml
-     serviceAccount:
-       annotations:
-         eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME
-     ```
+3. **Install with custom values**:
+   ```bash
+   # Create a values.yaml file with your configuration
+   helm install spawnr spawnr/spawnr --namespace spawnr -f custom-values.yaml
+   ```
 
-3. **Access the application**:
+4. **Configure IAM Role for Service Account (IRSA)**:
+   - Create an IAM role with EKS access permissions
+   - Set the role ARN in your values file or use `--set`:
+     ```bash
+     helm install spawnr spawnr/spawnr \
+       --namespace spawnr \
+       --set serviceAccount.annotations."eks\.amazonaws\.io/role-arn"="arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME"
+     ```
+   
+   Or in `values.yaml`:
+   ```yaml
+   serviceAccount:
+     annotations:
+       eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/ROLE_NAME
+   ```
+
+5. **Access the application**:
    ```bash
    # Port forward to access locally
    kubectl port-forward -n spawnr svc/spawnr 8080:80
    ```
    
    Then open http://localhost:8080 in your browser
+
+### Helm Configuration Options
+
+For a complete list of configuration options, see `helm/spawnr/values.yaml` or run:
+```bash
+helm show values spawnr/spawnr
+```
 
 ### Building Docker Images
 
