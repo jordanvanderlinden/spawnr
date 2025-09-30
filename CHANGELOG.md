@@ -1,3 +1,9 @@
+## [1.0.2](https://github.com/jordanvanderlinden/spawnr/compare/v1.0.1...v1.0.2) (2025-09-30)
+
+### 🐛 Bug Fixes
+
+* add debug step to figure out release ([b608beb](https://github.com/jordanvanderlinden/spawnr/commit/b608beb3f4d8ff9e5a6781d84fc2693f57a5e8e9))
+
 ## [1.0.1](https://github.com/jordanvanderlinden/spawnr/compare/v1.0.0...v1.0.1) (2025-09-30)
 
 ### 🐛 Bug Fixes
